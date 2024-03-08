@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  <h1>hello, chencs</h1>
+  <!-- 主导航设计, 这里可以根据后端数据冬天加载导航 -->
+  <div id="=nav"></div>
+
+  <!-- 内容区设计 -->
+  <div id="container">
+    <!-- 微应用渲染的插槽 -->
+    <div id="micro-app-slot"></div>
+  </div>
+
+  <!-- 微应用工具类 -->
+  <script type="text/javascript">
+    class UtilsManager {
+      constructor() {};
+
+      // API 接口管理
+      getMicroApps() {
+        return window.fetch('/microapps', {
+          method: 'POST',
+        })
+        .then((res) => res.json())
+        .catch((err) => {
+          console.error(err);
+        })
+      };
+
+      // 检测当前浏览器环境是否支持 prefetch
+      isSupportPrefetch() {
+        const link = document.createElement('link');
+        const relList = link.relList;
+        return relList && relList.supports && relList.supports('prefetch');
+      };
+
+      // 预请求资源,这个模式下 js 不执行
+      prefetchStatic(href, as) {
+        // prefetch 浏览器检测支持
+        if(!this.isSupportPrefetch()) {
+          return;
+        };
+
+        const $link = document.createElement('link');
+        $link.rel = 'prefetch';
+        $link.href = href;
+        $link.as = as;
+        document.head.appendChild($link);
+      };
+
+      // 请求 & 执行 js
+      loadScript({ script, id }) {
+        return new Promise((resolve, reject) => {
+          const $script = document.createElement('script');
+          $script.src = script;
+          $script.setAttribute('micro-script', id);
+          $script.onload = resolve;
+          $script.onerror = reject;
+          document.body.appendChild($script);
+        })
+      };
+
+      // 请求 style
+      loadStyle({ style, id }) {
+        return new Promise((resolve, reject) => {
+          const $style = document.createElement('link');
+          $style.rel = 'stylesheet';
+          $style.href = style;
+          $style.setAttribute('micro-style', id);
+          $style.onload = resolve;
+          $style.onerror = reject;
+          document.head.appendChild($style);
+        })
+      }
+
+      // 删除,卸载 style
+      removeStyle(id) {
+        const $style = document.querySelector(`[micro-style="${id}"]`);
+        $style && $style?.parentNode?.removeChild($style);
+      };
+
+      // 判断js资源是否已经加载过
+      hasLoadScript(id) {
+        const $script = document.querySelector(`[micro-script="${id}"]`);
+        return !!$script;
+      };
+
+      // 是否加载过样式
+      hasLoadStyle(id) {
+        const $style = document.querySelector(`[micro-style="${id}"]`);
+        return !!$style;
+      };
+    }
+  </script>
+
+  <!-- 根据路由切换微应用, 监听路由 -->
+  <script type="text/javascript">
+    // 微应用管理
+    class MicroAppManager extends UtilsManager {
+      microApps = [];
+
+      constructor() {
+        super();
+        this.init();
+      }
+
+      init() {
+        this.processMicroApps();
+        this.navClickListener();
+        this.hasChangeListener();
+      };
+
+      processMicroApps() {
+        this.getMicroApps().then((res) => {
+          this.microApps = res;
+          this.prefetchMicroAppStatic();
+          this.createMicroAppNav();
+        })
+      };
+
+      prefetchMicroAppStatic() {
+        const prefetchMicroApps = this.microApps.fitler((micro) => micro.prefetch);
+
+        prefetchMicroApps?.forEach((micro) => {
+          micro.script && this.prefetchStatic(micro.script, 'script');
+          micro.style && this.prefetchStatic(micro.style, 'style');
+        });
+      };
+
+      createMicroAppNav() {
+        const fragment = new DocumentFragment();
+        this.microApps?.forEach((microApp) => {
+          // TODO 数据检测,(例如是否存在, script, mount, unmount) 等
+          const button = document.createElement('button');
+          button.textContent = microApp.name;
+          button.id = microApp.id;
+          fragment.appendChild(button);
+        });
+
+        const nav = document.getElementById("nav");
+        nav.appendChild(fragment);
+      };
+
+      navClickListener() {
+        const nav = document.getElementById('nav');
+        nav.addEventListener('click', (event) => {
+          // 并不是button 可以触发导航变更,a 标签也可以,因此这里不直接处理微应用切换,只改变hash
+          // 不触发刷新, 类似框架得hash
+          window.location.hash = event?.target?.id;
+        })
+      };
+
+      hasChangeListener() {
+        // 监听hash 变化, 切换微应用
+        // 这里设定一个时刻页面上只有一个微应用
+        window.addEventListener('hashchange', (e) => {
+          this.microApps?.forEach(async (microApp) => {
+            // 匹配需要激活的微应用
+            if(microApp.id === window.location.hash.replace('#', "")) {
+              console.time(`---- fetch microApp ${microApp.name} static start ---`);
+
+              // 加载 css 样式
+              microApp?.style && !this.hasLoadStyle(microApp) &&
+              (await this.loadStyle(microApp));
+
+              // 加载 js 脚本
+              microApp?.script && !this.hasLoadScript(microApp) &&
+              (await this.loadScript(microApp));
+
+              console.timeEnd(`---- fetch microApp ${microApp.name} static end ----`);
+
+              window?.[microApp.mount]?.("#micro-app-slot");
+
+              // 如果需要卸载,这里卸载别的子应用
+            } else {
+              this.removeStyle(microApp);
+              window?.[microApp.unmount]?.();
+            }
+          });
+        })
+      };
+    }
+
+    new MicroAppManager();
+  </script>
+</body>
+</html>
